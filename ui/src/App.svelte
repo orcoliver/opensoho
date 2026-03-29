@@ -104,6 +104,16 @@
                     <i class="ri-database-2-line" />
                 </a>
                 <a
+                    href="/ssh/devices"
+                    class="menu-item"
+                    aria-label="SSH Management"
+                    use:link
+                    use:active={{ path: "/ssh/?.*", className: "current-route" }}
+                    use:tooltip={{ text: "SSH Management", position: "right" }}
+                >
+                    <i class="ri-router-line" />
+                </a>
+                <a
                     href="/logs"
                     class="menu-item"
                     aria-label="Logs"

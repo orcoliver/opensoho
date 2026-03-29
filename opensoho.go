@@ -1209,13 +1209,17 @@ func generateWifiRecordList(app core.App, device *core.Record) ([]*core.Record, 
 	return append(wifirecords, wifisteeringrecords...), err
 }
 
-func generateDeviceConfig(app core.App, record *core.Record) ([]byte, string, error) {
+// GenerateDeviceConfigFiles generates the UCI config files map for a device.
+// Returns a map of file paths (e.g., "etc/config/wireless") to their content.
+// This is the core config generation logic, usable both for tar.gz packaging
+// (legacy OpenWISP flow) and direct SSH push.
+func GenerateDeviceConfigFiles(app core.App, record *core.Record) (map[string]string, error) {
 	configfiles := map[string]string{}
 	leds := record.Get("leds").([]string)
 	fmt.Println(leds)
 	ledrecords, err := app.FindRecordsByIds("leds", leds)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	systemconfig := generateHostnameConfig(record)
 	systemconfig += generateLedConfigs(ledrecords)
@@ -1229,20 +1233,8 @@ func generateDeviceConfig(app core.App, record *core.Record) ([]byte, string, er
 	{
 		wifirecords, err := generateWifiRecordList(app, record)
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
-		// Add the steered Wifi configurations
-		//wifisteeringrecords, err := generateSsidClientSteeringConfig(app, record)
-		//fmt.Println("SSID STEERING", err)
-		//fmt.Println(wifisteeringrecords)
-		////if err != nil {
-		////	return nil, "", err
-		////}
-		////wifirecords = append(wifirecords, wifisteeringrecords...)
-
-		//sort.Slice(wifirecords, func(i, j int) bool {
-		//	return wifirecords[i].GetDateTime("created").Before(wifirecords[j].GetDateTime("created"))
-		//})
 
 		wificonfigstructs := []WifiRecord{}
 		for _, wifirecord := range wifirecords {
@@ -1250,8 +1242,6 @@ func generateDeviceConfig(app core.App, record *core.Record) ([]byte, string, er
 			wificonfigstructs = append(wificonfigstructs, wificonfigstruct)
 		}
 
-		// HostApdPskConfig needs to be called before the generateWifiConfigs
-		//wificonfigsstructs /*deviceHasPskConfig*/, _ := generateHostApdPskConfigs(app, wifirecords, &configfiles)
 		wificonfigs, has_vlan_config := generateWifiConfigs(wificonfigstructs, numradios, app, record)
 		fmt.Println(wificonfigs)
 		if len(wificonfigs) > 0 {
@@ -1315,8 +1305,16 @@ else
 fi
 `
 
-	blob, checksum, err := createConfigTar(configfiles)
+	return configfiles, nil
+}
 
+func generateDeviceConfig(app core.App, record *core.Record) ([]byte, string, error) {
+	configfiles, err := GenerateDeviceConfigFiles(app, record)
+	if err != nil {
+		return nil, "", err
+	}
+
+	blob, checksum, err := createConfigTar(configfiles)
 	if err != nil {
 	}
 	return blob, checksum, err
@@ -1713,6 +1711,7 @@ is-new: %d
 
 func bindAppHooks(app core.App, shared_secret string, enableNewDevices bool) {
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+		// --- Legacy OpenWISP endpoints (kept for backward compatibility) ---
 		se.Router.POST("/controller/register/", func(e *core.RequestEvent) error {
 			return handleDeviceRegistration(e, shared_secret, enableNewDevices)
 		})
@@ -1775,6 +1774,27 @@ func bindAppHooks(app core.App, shared_secret string, enableNewDevices bool) {
 			updateRadios(device, app, radios)
 			return err
 		})
+
+		// --- SSH Management endpoints ---
+		if isSSHEnabled() {
+			services, err := InitSSHServices(app)
+			if err != nil {
+				log.Printf("[ssh] WARNING: failed to initialize SSH services: %v", err)
+				log.Println("[ssh] SSH management endpoints will not be available")
+			} else {
+				BindSSHRoutes(se, app, services)
+				StartSSHCronJobs(app, services)
+
+				// Graceful shutdown
+				app.OnTerminate().BindFunc(func(te *core.TerminateEvent) error {
+					StopSSHServices(services)
+					return te.Next()
+				})
+
+				log.Println("[ssh] management endpoints registered successfully")
+			}
+		}
+
 		return se.Next()
 	})
 }

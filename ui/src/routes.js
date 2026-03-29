@@ -8,6 +8,8 @@ import PageExportCollections from "@/components/settings/PageExportCollections.s
 import PageImportCollections from "@/components/settings/PageImportCollections.svelte";
 import PageMail from "@/components/settings/PageMail.svelte";
 import PageStorage from "@/components/settings/PageStorage.svelte";
+import PageSSHDevices from "@/components/ssh/PageSSHDevices.svelte";
+import PageSSHDeviceDetail from "@/components/ssh/PageSSHDeviceDetail.svelte";
 import PageSuperuserLogin from "@/components/superusers/PageSuperuserLogin.svelte";
 import ApiClient from "@/utils/ApiClient";
 import { isTokenExpired } from "pocketbase";
@@ -136,6 +138,22 @@ const routes = {
     "/auth/oauth2-redirect-failure": wrap({
         asyncComponent: () => import("@/components/records/PageOAuth2RedirectFailure.svelte"),
         userData: { showAppSidebar: false },
+    }),
+
+    // ---------------------------------------------------------------
+    // SSH Management
+    // ---------------------------------------------------------------
+
+    "/ssh/devices": wrap({
+        component: PageSSHDevices,
+        conditions: [(_) => ApiClient.authStore.isValid],
+        userData: { showAppSidebar: true },
+    }),
+
+    "/ssh/device/:deviceId": wrap({
+        component: PageSSHDeviceDetail,
+        conditions: [(_) => ApiClient.authStore.isValid],
+        userData: { showAppSidebar: true },
     }),
 
     // catch-all fallback
