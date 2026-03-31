@@ -180,7 +180,7 @@
                                 </div>
                                 <div class="detail-row">
                                     <dt>IP Address</dt>
-                                    <dd><code>{device.last_ip_address || '—'}</code></dd>
+                                    <dd><code>{device.ip_address || '—'}</code></dd>
                                 </div>
                                 <div class="detail-row">
                                     <dt>Radios</dt>

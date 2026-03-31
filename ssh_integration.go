@@ -399,7 +399,7 @@ func runSSHReconnect(app core.App, services *SSHServices) {
 		}
 
 			// Try to reconnect adopted devices
-		host := record.GetString("last_ip_address")
+		host := record.GetString("ip_address")
 		if host == "" {
 			continue
 		}
@@ -661,7 +661,7 @@ func registerAdoptedDevice(app core.App, result *devicepkg.AdoptionResult) error
 	// Check if device already exists by MAC
 	existing, err := app.FindFirstRecordByData("devices", "mac_address", result.MAC)
 	if err == nil {
-		existing.Set("last_ip_address", result.Host)
+		existing.Set("ip_address", result.Host)
 		existing.Set("health_status", "healthy")
 		existing.Set("model", result.Model)
 		return app.Save(existing)
@@ -684,7 +684,7 @@ func registerAdoptedDevice(app core.App, result *devicepkg.AdoptionResult) error
 	record.Set("uuid", uuid.New().String())
 	record.Set("name", result.Hostname)
 	record.Set("mac_address", result.MAC)
-	record.Set("last_ip_address", result.Host)
+	record.Set("ip_address", result.Host)
 	record.Set("model", result.Model)
 	record.Set("health_status", "healthy")
 	record.Set("config_status", "applied")
