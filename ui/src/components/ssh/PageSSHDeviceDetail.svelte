@@ -9,9 +9,16 @@
 
     let device = null;
     let deviceStatus = null;
+    let wifis = [];
+    let radios = [];
+    let leds = [];
+    let dawnConfigured = false;
     let isLoading = true;
     let isPushing = false;
     let isRebooting = false;
+    let profiles = [];
+    let selectedProfileId = "";
+    let isApplyingProfile = false;
 
     $: if (params.deviceId) {
         loadDevice(params.deviceId);
@@ -23,12 +30,31 @@
             device = await ApiClient.collection("devices").getOne(id);
             $pageTitle = device.name || "Device Details";
 
-            // Load SSH status
             try {
                 deviceStatus = await ApiClient.send(`/api/ssh/device/${id}/status`, { method: "GET" });
             } catch {
                 deviceStatus = { connected: false, status: "offline" };
             }
+
+            // Load related data in parallel
+            const [wifiList, radioList, ledList, dawnList] = await Promise.allSettled([
+                device.wifis?.length
+                    ? ApiClient.collection("wifi").getList(1, 50, { filter: device.wifis.map(id => `id='${id}'`).join("||")})
+                    : Promise.resolve({ items: [] }),
+                ApiClient.collection("radios").getList(1, 10, { filter: `device='${id}'`, sort: "radio" }),
+                device.leds?.length
+                    ? ApiClient.collection("leds").getList(1, 50, { filter: device.leds.map(id => `id='${id}'`).join("||")})
+                    : Promise.resolve({ items: [] }),
+                ApiClient.collection("dawn").getList(1, 1),
+            ]);
+
+            wifis = wifiList.status === "fulfilled" ? wifiList.value.items : [];
+            radios = radioList.status === "fulfilled" ? radioList.value.items : [];
+            leds = ledList.status === "fulfilled" ? ledList.value.items : [];
+            dawnConfigured = dawnList.status === "fulfilled" && dawnList.value.totalItems > 0;
+
+            profiles = await ApiClient.collection("device_profile").getFullList({ sort: "name" });
+            selectedProfileId = device.profile || "";
         } catch (err) {
             ApiClient.error(err);
         }
@@ -58,6 +84,31 @@
             addErrorToast(err?.data?.error || "Reboot failed");
         }
         isRebooting = false;
+    }
+
+    async function applyProfileAndPush() {
+        if (!device) return;
+        isApplyingProfile = true;
+        try {
+            await ApiClient.collection("devices").update(device.id, { profile: selectedProfileId || null });
+            const resp = await ApiClient.send(`/api/ssh/push-config/${device.id}`, { method: "POST" });
+            addSuccessToast(resp.message || "Profile applied and config pushed!");
+            await loadDevice(device.id);
+        } catch (err) {
+            addErrorToast(err?.data?.error || err?.message || "Apply profile failed");
+        }
+        isApplyingProfile = false;
+    }
+
+    function profileSummary(id) {
+        const p = profiles.find(x => x.id === id);
+        if (!p) return "";
+        const parts = [];
+        if (p.disable_firewall) parts.push("firewall disabled");
+        if (p.disable_dnsmasq) parts.push("dnsmasq disabled");
+        if (p.igmp_snooping) parts.push("IGMP snooping");
+        parts.push(`LAN: ${p.lan_proto}`);
+        return parts.join(" · ");
     }
 
     function formatDate(dateStr) {
@@ -129,7 +180,7 @@
                                 </div>
                                 <div class="detail-row">
                                     <dt>IP Address</dt>
-                                    <dd><code>{device.ip_address || '—'}</code></dd>
+                                    <dd><code>{device.last_ip_address || '—'}</code></dd>
                                 </div>
                                 <div class="detail-row">
                                     <dt>Radios</dt>
@@ -144,6 +195,30 @@
                                     <dd>{formatDate(device.updated)}</dd>
                                 </div>
                             </dl>
+                            <div class="profile-selector m-t-sm">
+                                <label class="txt-sm txt-hint">Device Profile</label>
+                                <div class="inline-flex flex-gap-5 m-t-xs">
+                                    <select bind:value={selectedProfileId} class="select-sm">
+                                        <option value="">— No profile —</option>
+                                        {#each profiles as p}
+                                            <option value={p.id}>{p.name}</option>
+                                        {/each}
+                                    </select>
+                                    <button
+                                        type="button"
+                                        class="btn btn-sm btn-info"
+                                        class:btn-loading={isApplyingProfile}
+                                        disabled={isApplyingProfile}
+                                        on:click={applyProfileAndPush}
+                                    >
+                                        <i class="ri-upload-cloud-line" />
+                                        <span class="txt">Apply &amp; Push</span>
+                                    </button>
+                                </div>
+                                {#if selectedProfileId}
+                                    <p class="txt-hint txt-xs m-t-xs">{profileSummary(selectedProfileId)}</p>
+                                {/if}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -219,12 +294,7 @@
                         </div>
                         <div class="panel-content">
                             <div class="actions-grid">
-                                <button
-                                    type="button"
-                                    class="action-btn"
-                                    class:btn-loading={isPushing}
-                                    on:click={pushConfig}
-                                >
+                                <button type="button" class="action-btn" class:btn-loading={isPushing} on:click={pushConfig}>
                                     <i class="ri-upload-cloud-line" />
                                     <span>Push Config</span>
                                     <small>Apply pending changes via SSH</small>
@@ -234,16 +304,22 @@
                                     <span>Edit Record</span>
                                     <small>Modify device fields in PocketBase</small>
                                 </a>
-                                <a href="/collections?collection=wifis" class="action-btn" use:link>
+                                <a href="/collections?collection=wifi" class="action-btn" use:link>
                                     <i class="ri-wifi-line" />
                                     <span>WiFi Settings</span>
                                     <small>Manage SSIDs and passwords</small>
                                 </a>
-                                <button
-                                    type="button"
-                                    class="action-btn action-danger"
-                                    on:click={rebootDevice}
-                                >
+                                <a href="/ssh/leds" class="action-btn" use:link>
+                                    <i class="ri-lightbulb-line" />
+                                    <span>LED Config</span>
+                                    <small>Manage LED triggers</small>
+                                </a>
+                                <a href="/ssh/dawn" class="action-btn" use:link>
+                                    <i class="ri-router-line" />
+                                    <span>DAWN Config</span>
+                                    <small>{dawnConfigured ? 'Configured ✓' : 'Not configured'}</small>
+                                </a>
+                                <button type="button" class="action-btn action-danger" on:click={rebootDevice}>
                                     <i class="ri-restart-line" />
                                     <span>Reboot</span>
                                     <small>Restart this access point</small>
@@ -252,6 +328,75 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- WiFi Networks -->
+                {#if wifis.length > 0}
+                <div class="col-lg-6">
+                    <div class="panel detail-panel">
+                        <div class="panel-header">
+                            <h6><i class="ri-wifi-line" /> WiFi Networks ({wifis.length})</h6>
+                        </div>
+                        <div class="panel-content">
+                            {#each wifis as wifi}
+                                <div class="wifi-row">
+                                    <div class="wifi-info">
+                                        <span class="txt-bold">{wifi.ssid}</span>
+                                        <span class="label label-hint txt-sm">{wifi.encryption || '—'}</span>
+                                    </div>
+                                    <span class="label {wifi.enabled ? 'label-success' : 'label-hint'}">
+                                        {wifi.enabled ? 'enabled' : 'disabled'}
+                                    </span>
+                                </div>
+                            {/each}
+                        </div>
+                    </div>
+                </div>
+                {/if}
+
+                <!-- Radios -->
+                {#if radios.length > 0}
+                <div class="col-lg-6">
+                    <div class="panel detail-panel">
+                        <div class="panel-header">
+                            <h6><i class="ri-broadcast-line" /> Radios ({radios.length})</h6>
+                        </div>
+                        <div class="panel-content">
+                            {#each radios as radio}
+                                <div class="radio-row">
+                                    <span class="txt-bold">radio{radio.radio}</span>
+                                    <span class="label label-info">{radio.band} GHz</span>
+                                    <span class="txt-hint txt-sm">
+                                        {radio.auto_frequency ? 'auto' : `ch ${radio.channel}`}
+                                        {radio.htmode ? `· ${radio.htmode}` : ''}
+                                    </span>
+                                </div>
+                            {/each}
+                        </div>
+                    </div>
+                </div>
+                {/if}
+
+                <!-- LEDs -->
+                {#if leds.length > 0}
+                <div class="col-lg-12">
+                    <div class="panel detail-panel">
+                        <div class="panel-header">
+                            <h6><i class="ri-lightbulb-line" /> LEDs ({leds.length})</h6>
+                        </div>
+                        <div class="panel-content">
+                            <div class="leds-grid">
+                                {#each leds as led}
+                                    <div class="led-item">
+                                        <span class="txt-bold">{led.name}</span>
+                                        <code class="txt-sm txt-hint">{led.led_name}</code>
+                                        <span class="label label-hint">{led.trigger || 'none'}</span>
+                                    </div>
+                                {/each}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {/if}
             </div>
         {/if}
     </div>
@@ -380,4 +525,52 @@
 
     .txt-success { color: var(--successColor); }
     .txt-danger  { color: var(--dangerColor); }
+
+    .wifi-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--baseAlt1Color);
+    }
+    .wifi-row:last-child { border-bottom: none; }
+    .wifi-info { display: flex; align-items: center; gap: 8px; }
+
+    .radio-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--baseAlt1Color);
+    }
+    .radio-row:last-child { border-bottom: none; }
+
+    .leds-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 10px;
+    }
+    .led-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 10px;
+        border: 1px solid var(--baseAlt1Color);
+        border-radius: var(--baseRadius);
+    }
+
+    .label {
+        display: inline-block; padding: 2px 8px; border-radius: 30px;
+        font-size: var(--xsFontSize); font-weight: 600; text-transform: capitalize;
+    }
+    .label-success { background: var(--successAltColor); color: #1a6b4a; }
+    .label-hint    { background: var(--baseAlt1Color);   color: var(--txtHintColor); }
+    .label-info    { background: var(--infoAltColor);    color: #2d6bb0; }
+
+    .profile-selector { border-top: 1px solid var(--baseAlt1Color); padding-top: 12px; }
+    .inline-flex { display: inline-flex; align-items: center; }
+    .flex-gap-5 { gap: 5px; }
+    .select-sm { height: 32px; font-size: var(--smFontSize); }
+    .m-t-xs { margin-top: 4px; }
+    .txt-xs { font-size: var(--xsFontSize); }
 </style>

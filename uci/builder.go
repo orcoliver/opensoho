@@ -6,6 +6,14 @@ import (
 	"strings"
 )
 
+// ServiceDisableMap maps service names to the commands needed to disable and stop them.
+// Used for dumb AP profiles that need to neutralize firewall/dnsmasq/odhcpd.
+var ServiceDisableMap = map[string]string{
+	"firewall": "/etc/init.d/firewall disable 2>/dev/null; /etc/init.d/firewall stop 2>/dev/null",
+	"dnsmasq":  "/etc/init.d/dnsmasq disable 2>/dev/null; /etc/init.d/dnsmasq stop 2>/dev/null",
+	"odhcpd":   "/etc/init.d/odhcpd disable 2>/dev/null; /etc/init.d/odhcpd stop 2>/dev/null",
+}
+
 // ServiceReloadMap maps UCI package names to the commands needed to reload them.
 var ServiceReloadMap = map[string]string{
 	"wireless": "wifi reload",

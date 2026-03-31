@@ -19,6 +19,7 @@
     // Adoption
     let adoptingDevice = null;
     let adoptPassword = "";
+    let adoptImportConfig = false;
     let isAdopting = false;
 
     // Public key
@@ -71,6 +72,7 @@
     async function adoptDevice(device) {
         adoptingDevice = device;
         adoptPassword = "";
+        adoptImportConfig = false;
     }
 
     async function confirmAdopt() {
@@ -79,9 +81,8 @@
         isAdopting = true;
         try {
             const body = { host: adoptingDevice.ip };
-            if (adoptPassword) {
-                body.password = adoptPassword;
-            }
+            if (adoptPassword) body.password = adoptPassword;
+            if (adoptImportConfig) body.import_config = true;
             const resp = await ApiClient.send("/api/ssh/adopt", {
                 method: "POST",
                 body: JSON.stringify(body),
@@ -156,6 +157,18 @@
             <div class="breadcrumb-item">Devices</div>
         </nav>
         <div class="btns-group">
+            <a href="/ssh/leds" class="btn btn-outline" use:link>
+                <i class="ri-lightbulb-line" />
+                <span class="txt">LEDs</span>
+            </a>
+            <a href="/ssh/dawn" class="btn btn-outline" use:link>
+                <i class="ri-router-line" />
+                <span class="txt">DAWN</span>
+            </a>
+            <a href="/ssh/profiles" class="btn btn-outline" use:link>
+                <i class="ri-layout-grid-line" />
+                <span class="txt">Profiles</span>
+            </a>
             <button
                 type="button"
                 class="btn btn-outline"
@@ -302,10 +315,25 @@
                         />
                     </div>
 
-                    <div class="alert alert-info m-t-sm">
-                        <i class="ri-information-line" />
-                        <span>The server will inject its SSH public key into the device for future passwordless access.</span>
+                    <div class="form-field m-t-sm">
+                        <label class="toggle-label">
+                            <input type="checkbox" bind:checked={adoptImportConfig} />
+                            <span>Import existing configuration</span>
+                        </label>
+                        <small class="txt-hint">Read the current WiFi, radio, LED and DAWN config from the device and import it into OpenSOHO. No config push will be performed.</small>
                     </div>
+
+                    {#if adoptImportConfig}
+                        <div class="alert alert-warning m-t-sm">
+                            <i class="ri-information-line" />
+                            <span>The device will keep its current configuration. OpenSOHO will only read and store it.</span>
+                        </div>
+                    {:else}
+                        <div class="alert alert-info m-t-sm">
+                            <i class="ri-information-line" />
+                            <span>The server will inject its SSH public key and push the OpenSOHO configuration to the device.</span>
+                        </div>
+                    {/if}
                 </div>
                 <div class="panel-footer">
                     <button type="button" class="btn btn-transparent" on:click={cancelAdopt}>
@@ -569,9 +597,16 @@
         border-radius: var(--baseRadius);
         font-size: var(--smFontSize);
     }
-    .alert-info {
-        background: var(--infoAltColor);
-        color: #2d6bb0;
+    .alert-warning {
+        background: var(--warningAltColor);
+        color: #8a5a2a;
+    }
+    .toggle-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        font-weight: 600;
     }
 
     .ssh-key-panel .panel-header {

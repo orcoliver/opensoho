@@ -425,12 +425,32 @@ func updateRadios(device *core.Record, app core.App, newradios map[int]Radio) {
 
 func generateLedConfig(led *core.Record) string {
 	name := led.GetString("name")
+	trigger := led.GetString("trigger")
+
+	extra := ""
+	switch trigger {
+	case "netdev":
+		if dev := led.GetString("dev"); dev != "" {
+			extra += fmt.Sprintf("        option dev '%s'\n", dev)
+		}
+		if modes := led.GetStringSlice("mode"); len(modes) > 0 {
+			extra += fmt.Sprintf("        option mode '%s'\n", strings.Join(modes, " "))
+		}
+	case "timer":
+		if v := led.GetInt("delayon"); v > 0 {
+			extra += fmt.Sprintf("        option delayon '%d'\n", v)
+		}
+		if v := led.GetInt("delayoff"); v > 0 {
+			extra += fmt.Sprintf("        option delayoff '%d'\n", v)
+		}
+	}
+
 	return fmt.Sprintf(`
 config led 'led_%s'
         option name '%s'
         option sysfs '%s'
         option trigger '%s'
-`, strings.ToLower(name), name, led.GetString("led_name"), led.GetString("trigger"))
+%s`, strings.ToLower(name), name, led.GetString("led_name"), trigger, extra)
 }
 
 func generateRadioConfig(radio *core.Record, country_code string) string {
@@ -518,6 +538,100 @@ config monitoring 'monitoring'
 `)
 }
 
+func generateDawnConfig(app core.App) string {
+	record, err := app.FindFirstRecordByFilter("dawn", "id != ''", nil)
+	if err != nil {
+		return ""
+	}
+
+	rrm := record.GetString("rrm_mode")
+	if rrm == "" {
+		rrm = "pat"
+	}
+
+	kicking := 0
+	if record.GetBool("kicking") {
+		kicking = 1
+	}
+	setHostapdNr := 0
+	if record.GetBool("set_hostapd_nr") {
+		setHostapdNr = 1
+	}
+	useStationCount := 0
+	if record.GetBool("use_station_count") {
+		useStationCount = 1
+	}
+
+	return fmt.Sprintf(`
+config global 'global'
+        option kicking '%d'
+        option set_hostapd_nr '%d'
+        option rrm_mode '%s'
+
+config metric
+        option initial_score '%d'
+        option ht_support '%d'
+        option vht_support '%d'
+        option he_support '%d'
+        option rssi '%d'
+        option rssi_val '%d'
+        option low_rssi '%d'
+        option low_rssi_val '%d'
+        option freq_5 '%d'
+        option chan_util '%d'
+        option rssi_weight '%d'
+        option rssi_center '%d'
+
+config times
+        option update_client '%d'
+        option remove_client '%d'
+        option remove_probe '%d'
+        option update_hostapd '%d'
+        option update_tcp_con '%d'
+        option update_chan_util '%d'
+        option update_beacon_reports '%d'
+
+config behaviour
+        option kicking_threshold '%d'
+        option min_probe_count '%d'
+        option bandwidth_threshold '%d'
+        option use_station_count '%d'
+        option max_station_diff '%d'
+        option min_number_to_kick '%d'
+        option chan_util_avg_period '%d'
+        option min_kick_count '%d'
+`,
+		kicking, setHostapdNr, rrm,
+		record.GetInt("initial_score"),
+		record.GetInt("ht_support"),
+		record.GetInt("vht_support"),
+		record.GetInt("he_support"),
+		record.GetInt("rssi"),
+		record.GetInt("rssi_val"),
+		record.GetInt("low_rssi"),
+		record.GetInt("low_rssi_val"),
+		record.GetInt("freq_5"),
+		record.GetInt("chan_util"),
+		record.GetInt("rssi_weight"),
+		record.GetInt("rssi_center"),
+		record.GetInt("update_client"),
+		record.GetInt("remove_client"),
+		record.GetInt("remove_probe"),
+		record.GetInt("update_hostapd"),
+		record.GetInt("update_tcp_con"),
+		record.GetInt("update_chan_util"),
+		record.GetInt("update_beacon_reports"),
+		record.GetInt("kicking_threshold"),
+		record.GetInt("min_probe_count"),
+		record.GetInt("bandwidth_threshold"),
+		useStationCount,
+		record.GetInt("max_station_diff"),
+		record.GetInt("min_number_to_kick"),
+		record.GetInt("chan_util_avg_period"),
+		record.GetInt("min_kick_count"),
+	)
+}
+
 func JoinLines(lines []string) string {
 	if len(lines) == 0 {
 		return ""
@@ -575,6 +689,35 @@ func generateWifiConfig(wifirecord WifiRecord, wifiid int, radio uint, app core.
 		disabled = 1
 	}
 
+	ftOverDs := 0
+	if wifi.GetBool("ft_over_ds") {
+		ftOverDs = 1
+	}
+	ftPskLocal := 1
+	if !wifi.GetBool("ft_psk_generate_local") {
+		ftPskLocal = 0
+	}
+
+	// Optional 802.11r fields
+	optional := ""
+	if wifi.GetBool("ieee80211r") {
+		if md := wifi.GetString("mobility_domain"); md != "" {
+			optional += fmt.Sprintf("        option mobility_domain '%s'\n", md)
+		}
+		if nasid := wifi.GetString("nasid"); nasid != "" {
+			optional += fmt.Sprintf("        option nasid '%s'\n", nasid)
+		}
+	}
+	// Optional 802.11k RRM fields
+	if wifi.GetBool("ieee80211k") {
+		if wifi.GetBool("rrm_neighbor_report") {
+			optional += "        option rrm_neighbor_report '1'\n"
+		}
+		if wifi.GetBool("rrm_beacon_report") {
+			optional += "        option rrm_beacon_report '1'\n"
+		}
+	}
+
 	return fmt.Sprintf(`
 config wifi-iface '%s'
         option device 'radio%d'
@@ -596,22 +739,23 @@ config wifi-iface '%s'
         option proxy_arp '%d'
         option bss_transition '%d'
         option dtim_period '%d'
-        option ft_over_ds '0'
-        option ft_psk_generate_local '1'
-%s%s`,
-			ifaceName, radio, vlanName, disabled,
-			ssid, encryption, key,
-			wifi.GetInt("hidden"),
-			wifi.GetInt("isolate_clients"),
-			wifi.GetInt("ieee80211k"),
-			wifi.GetInt("ieee80211r"),
-			rDeadLine,
-			vta_flag, vta_tz,
-			wifi.GetInt("ieee80211v_wnm_sleep_mode"),
-			wifi.GetInt("ieee80211v_proxy_arp"),
-			wifi.GetInt("ieee80211v_bss_transition"),
-			dtim,
-			steeringconfig, clientpskconfig),
+        option ft_over_ds '%d'
+        option ft_psk_generate_local '%d'
+%s%s%s`,
+		ifaceName, radio, vlanName, disabled,
+		ssid, encryption, key,
+		wifi.GetInt("hidden"),
+		wifi.GetInt("isolate_clients"),
+		wifi.GetInt("ieee80211k"),
+		wifi.GetInt("ieee80211r"),
+		rDeadLine,
+		vta_flag, vta_tz,
+		wifi.GetInt("ieee80211v_wnm_sleep_mode"),
+		wifi.GetInt("ieee80211v_proxy_arp"),
+		wifi.GetInt("ieee80211v_bss_transition"),
+		dtim,
+		ftOverDs, ftPskLocal,
+		optional, steeringconfig, clientpskconfig),
 		len(clientpskconfig) > 0
 }
 
@@ -1209,6 +1353,148 @@ func generateWifiRecordList(app core.App, device *core.Record) ([]*core.Record, 
 	return append(wifirecords, wifisteeringrecords...), err
 }
 
+func loadDeviceProfile(app core.App, record *core.Record) *core.Record {
+	profileID := record.GetString("profile")
+	if profileID == "" {
+		return nil
+	}
+	profile, err := app.FindRecordById("device_profile", profileID)
+	if err != nil {
+		app.Logger().Warn("loadDeviceProfile: profile not found", "id", profileID, "error", err)
+		return nil
+	}
+	return profile
+}
+
+// generateNetworkConfig generates etc/config/network based on a device profile.
+// It produces a full network config (loopback, br-lan device, lan interface, extra networks).
+// Ethernet ports are read from the device's ethernet collection; if absent, the ports list is omitted.
+func generateNetworkConfig(app core.App, device *core.Record, profile *core.Record) string {
+	// Collect ethernet ports for br-lan
+	ethRecords, _ := app.FindRecordsByFilter(
+		"ethernet",
+		"device = {:device}",
+		"name",
+		0, 0,
+		dbx.Params{"device": device.Id},
+	)
+	portsList := ""
+	for _, eth := range ethRecords {
+		portsList += fmt.Sprintf("        list ports '%s'\n", eth.GetString("name"))
+	}
+
+	bvf := "0"
+	if profile.GetBool("bridge_vlan_filtering") {
+		bvf = "1"
+	}
+	stpVal := "0"
+	if profile.GetBool("stp") {
+		stpVal = "1"
+	}
+	igmp := "0"
+	if profile.GetBool("igmp_snooping") {
+		igmp = "1"
+	}
+
+	lanProto := profile.GetString("lan_proto")
+	lanIntfExtra := ""
+	if lanProto == "static" {
+		cidr := profile.GetString("lan_cidr")
+		if cidr != "" {
+			ipAddr, ipNet, err := net.ParseCIDR(cidr)
+			if err == nil {
+				prefixsize, _ := ipNet.Mask.Size()
+				mask, _ := CIDRToMask(prefixsize)
+				lanIntfExtra = fmt.Sprintf("\n        option ipaddr '%s'\n        option netmask '%s'", ipAddr, mask)
+			}
+		}
+	}
+
+	out := fmt.Sprintf(`config interface 'loopback'
+        option device 'lo'
+        option proto 'static'
+        option ipaddr '127.0.0.1'
+        option netmask '255.0.0.0'
+
+config globals 'globals'
+        option ula_prefix 'auto'
+
+config device 'br_lan_dev'
+        option name 'br-lan'
+        option type 'bridge'
+        option bridge_vlan_filtering '%s'
+        option stp '%s'
+        option igmp_snooping '%s'
+%s
+config interface 'lan'
+        option device 'br-lan'
+        option proto '%s'%s
+`, bvf, stpVal, igmp, portsList, lanProto, lanIntfExtra)
+
+	// Extra networks from profile.extra_networks (JSON array)
+	type extraNetwork struct {
+		Name        string   `json:"name"`
+		Device      string   `json:"device"`
+		Proto       string   `json:"proto"`
+		BridgePorts []string `json:"bridge_ports"`
+	}
+	var extras []extraNetwork
+	if err := profile.UnmarshalJSONField("extra_networks", &extras); err == nil {
+		for _, en := range extras {
+			safeName := strings.ReplaceAll(en.Name, "-", "_")
+			devSafeName := strings.ReplaceAll(en.Device, "-", "_")
+			bports := ""
+			for _, bp := range en.BridgePorts {
+				bports += fmt.Sprintf("        list ports '%s'\n", bp)
+			}
+			out += fmt.Sprintf(`
+config device '%s_dev'
+        option name '%s'
+        option type 'bridge'
+%s
+config interface '%s'
+        option device '%s'
+        option proto '%s'
+`, devSafeName, en.Device, bports, safeName, en.Device, en.Proto)
+		}
+	}
+
+	return out
+}
+
+// generateFirewallConfig generates a neutralized etc/config/firewall for dumb AP mode.
+func generateFirewallConfig() string {
+	return `config defaults
+        option input 'ACCEPT'
+        option output 'ACCEPT'
+        option forward 'ACCEPT'
+        option synflood_protect '0'
+        option drop_invalid '0'
+`
+}
+
+// generateDhcpProfileConfig generates etc/config/dhcp when a profile disables dnsmasq/odhcpd.
+func generateDhcpProfileConfig(profile *core.Record) string {
+	disableDnsmasq := profile.GetBool("disable_dnsmasq")
+	disableOdhcpd := profile.GetBool("disable_odhcpd")
+	if !disableDnsmasq && !disableOdhcpd {
+		return ""
+	}
+	out := ""
+	if disableDnsmasq {
+		out += `config dnsmasq
+        option disabled '1'
+
+`
+	}
+	if disableOdhcpd {
+		out += `config odhcpd 'odhcpd'
+        option maindhcp '0'
+`
+	}
+	return out
+}
+
 // GenerateDeviceConfigFiles generates the UCI config files map for a device.
 // Returns a map of file paths (e.g., "etc/config/wireless") to their content.
 // This is the core config generation logic, usable both for tar.gz packaging
@@ -1269,24 +1555,31 @@ func GenerateDeviceConfigFiles(app core.App, record *core.Record) (map[string]st
 		configfiles["etc/config/openwisp"] = generateOpenWispConfig()
 	}
 	{
+		if dawnconfig := generateDawnConfig(app); len(dawnconfig) > 0 {
+			configfiles["etc/config/dawn"] = dawnconfig
+		}
+	}
+	{
 		sshkeyconfigs := generateSshKeyConfig(app)
 		fmt.Println(sshkeyconfigs)
 		if len(sshkeyconfigs) > 0 {
 			configfiles["etc/dropbear/authorized_keys"] = sshkeyconfigs
 		}
 	}
-	{
-		interfacesconfigs := generateInterfacesConfig(app, record)
-		fmt.Println(interfacesconfigs)
-		if len(interfacesconfigs) > 0 {
+	profile := loadDeviceProfile(app, record)
+	if profile != nil {
+		configfiles["etc/config/network"] = generateNetworkConfig(app, record, profile)
+		if profile.GetBool("disable_firewall") {
+			configfiles["etc/config/firewall"] = generateFirewallConfig()
+		}
+		if dhcpConfig := generateDhcpProfileConfig(profile); dhcpConfig != "" {
+			configfiles["etc/config/dhcp"] = dhcpConfig
+		}
+	} else {
+		if interfacesconfigs := generateInterfacesConfig(app, record); interfacesconfigs != "" {
 			configfiles["etc/config/network"] = interfacesconfigs
 		}
-	}
-
-	{
-		dhcpconfigs := generateDhcpConfig(app, record)
-		fmt.Println(dhcpconfigs)
-		if len(dhcpconfigs) > 0 {
+		if dhcpconfigs := generateDhcpConfig(app, record); dhcpconfigs != "" {
 			configfiles["etc/config/dhcp"] = dhcpconfigs
 		}
 	}

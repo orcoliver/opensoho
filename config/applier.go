@@ -159,6 +159,24 @@ func (a *Applier) FullApply(deviceID string, configFiles map[string]string) erro
 	return nil
 }
 
+// DisableServices runs the disable+stop command for each named service on the device.
+// Service names correspond to keys in uci.ServiceDisableMap (e.g., "firewall", "dnsmasq", "odhcpd").
+// Unknown service names are silently skipped.
+func (a *Applier) DisableServices(deviceID string, services []string) error {
+	for _, svc := range services {
+		cmd, ok := ucipkg.ServiceDisableMap[svc]
+		if !ok {
+			log.Printf("[config] DisableServices: unknown service %q, skipping", svc)
+			continue
+		}
+		log.Printf("[config] device %s: disabling service %s", deviceID, svc)
+		if _, err := a.SSH.Execute(deviceID, cmd); err != nil {
+			return fmt.Errorf("failed to disable service %s: %w", svc, err)
+		}
+	}
+	return nil
+}
+
 // RevertPackage reverts a UCI package to its saved state on the device.
 func (a *Applier) RevertPackage(deviceID, pkg string) error {
 	_, err := a.SSH.Execute(deviceID, fmt.Sprintf("uci revert %s", pkg))

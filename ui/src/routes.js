@@ -10,6 +10,9 @@ import PageMail from "@/components/settings/PageMail.svelte";
 import PageStorage from "@/components/settings/PageStorage.svelte";
 import PageSSHDevices from "@/components/ssh/PageSSHDevices.svelte";
 import PageSSHDeviceDetail from "@/components/ssh/PageSSHDeviceDetail.svelte";
+import PageDawn from "@/components/ssh/PageDawn.svelte";
+import PageLeds from "@/components/ssh/PageLeds.svelte";
+import PageProfiles from "@/components/ssh/PageProfiles.svelte";
 import PageSuperuserLogin from "@/components/superusers/PageSuperuserLogin.svelte";
 import ApiClient from "@/utils/ApiClient";
 import { isTokenExpired } from "pocketbase";
@@ -152,6 +155,24 @@ const routes = {
 
     "/ssh/device/:deviceId": wrap({
         component: PageSSHDeviceDetail,
+        conditions: [(_) => ApiClient.authStore.isValid],
+        userData: { showAppSidebar: true },
+    }),
+
+    "/ssh/dawn": wrap({
+        component: PageDawn,
+        conditions: [(_) => ApiClient.authStore.isValid],
+        userData: { showAppSidebar: true },
+    }),
+
+    "/ssh/leds": wrap({
+        component: PageLeds,
+        conditions: [(_) => ApiClient.authStore.isValid],
+        userData: { showAppSidebar: true },
+    }),
+
+    "/ssh/profiles": wrap({
+        component: PageProfiles,
         conditions: [(_) => ApiClient.authStore.isValid],
         userData: { showAppSidebar: true },
     }),
