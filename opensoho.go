@@ -1925,7 +1925,8 @@ func main() {
 			if !e.Router.HasRoute(http.MethodGet, "/{path...}") {
 				e.Router.GET("/{path...}", func(e *core.RequestEvent) error {
 					e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-					return e.Redirect(307, "/_/")
+					basePath := strings.TrimSuffix(e.Request.Header.Get("X-Ingress-Path"), "/")
+					return e.Redirect(307, basePath+"/_/")
 				})
 			}
 
